@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:           # Keep existing triggers if any  
     branches: [main]
-  workflow_dispatch:      # ← ADD THIS BLOCK for Python triggering
+  workflow_dispatch:      # ← Enhanced for session tracking
     inputs:
       json_filename:
         description: 'JSON filename (e.g., entry_criteria_UPLR4.6.json)'
@@ -21,6 +21,30 @@ on:
         required: false
         type: string
         default: 'production'
+      # ── NEW: Session Management Inputs ──
+      trigger_source:
+        description: 'Source that triggered this workflow (python_script, web_gui, api_call, manual)'
+        required: true
+        type: choice
+        options:
+          - python_script
+          - web_gui
+          - api_call
+          - manual
+        default: 'manual'
+      callback_url:
+        description: 'Callback URL for sending results back to trigger source'
+        required: false
+        type: string
+      session_id:
+        description: 'Session ID for tracking this build request'
+        required: false
+        type: string
+      requester_info:
+        description: 'Information about who/what requested this build (JSON format)'
+        required: false
+        type: string
+        default: '{"user": "unknown", "timestamp": ""}'
 
 env:
   BUILD_BASE_PATH: /nfs/site/disks/dcsg_0729/users/pkummara
@@ -31,8 +55,69 @@ env:
   EXPECT_PATH: /usr/bin/expect
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # NEW JOB: Session Management
+  # ─────────────────────────────────────────────────────────────────
+  session-management:
+    runs-on: [self-hosted, node16]
+    outputs:
+      session_id: ${{ steps.session.outputs.session_id }}
+      trigger_source: ${{ steps.session.outputs.trigger_source }}
+      callback_url: ${{ steps.session.outputs.callback_url }}
+      requester_info: ${{ steps.session.outputs.requester_info }}
+      
+    steps:
+      - name: Initialize Session Information
+        id: session
+        run: |
+          echo "🔄 Initializing Session Management"
+          echo "=================================================="
+          
+          # Get or generate session ID
+          if [ -n "${{ github.event.inputs.session_id }}" ]; then
+            SESSION_ID="${{ github.event.inputs.session_id }}"
+            echo "📋 Using provided session ID: $SESSION_ID"
+          else
+            SESSION_ID="session_$(date +%Y%m%d_%H%M%S)_${{ github.run_id }}"
+            echo "🆔 Generated session ID: $SESSION_ID"
+          fi
+          
+          # Store trigger source information
+          TRIGGER_SOURCE="${{ github.event.inputs.trigger_source }}"
+          CALLBACK_URL="${{ github.event.inputs.callback_url }}"
+          REQUESTER_INFO="${{ github.event.inputs.requester_info }}"
+          
+          echo "📡 Trigger Source: $TRIGGER_SOURCE"
+          echo "🔗 Callback URL: $CALLBACK_URL"
+          echo "👤 Requester Info: $REQUESTER_INFO"
+          
+          # Set outputs for other jobs to use
+          echo "session_id=$SESSION_ID" >> $GITHUB_OUTPUT
+          echo "trigger_source=$TRIGGER_SOURCE" >> $GITHUB_OUTPUT
+          echo "callback_url=$CALLBACK_URL" >> $GITHUB_OUTPUT
+          echo "requester_info=$REQUESTER_INFO" >> $GITHUB_OUTPUT
+          
+          # Create session file for persistence
+          SESSION_FILE="/tmp/build_session_${SESSION_ID}.json"
+          cat > "$SESSION_FILE" << EOF
+          {
+            "session_id": "$SESSION_ID",
+            "trigger_source": "$TRIGGER_SOURCE",
+            "callback_url": "$CALLBACK_URL",
+            "requester_info": $REQUESTER_INFO,
+            "workflow_run_id": "${{ github.run_id }}",
+            "repository": "${{ github.repository }}",
+            "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "json_filename": "${{ github.event.inputs.json_filename }}"
+          }
+          EOF
+          
+          echo "💾 Session file created: $SESSION_FILE"
+          echo "✅ Session initialization completed"
+
   read-json:
     runs-on: [self-hosted, node16]
+    needs: session-management  # Add dependency
     outputs:
       json_path: ${{ steps.validate.outputs.json_path }}
       previous_version: ${{ steps.extract_version.outputs.previous_version }}
@@ -42,6 +127,11 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
       
+    - name: Session Info Display
+      run: |
+        echo "🔄 Session ID: ${{ needs.session-management.outputs.session_id }}"
+        echo "📡 Triggered by: ${{ needs.session-management.outputs.trigger_source }}"
+        
     - name: Validate JSON file exists
       id: validate
       run: |
@@ -142,6 +232,8 @@ jobs:
         {
           echo "# 📊 SRF Debug UP Build Pipeline"
           echo ""
+          echo "**Session ID:** \`${{ needs.session-management.outputs.session_id }}\`"
+          echo "**Trigger Source:** \`${{ needs.session-management.outputs.trigger_source }}\`"
           echo "**JSON File:** \`${{ github.event.inputs.json_filename }}\`"
           echo ""
           echo "## 📋 Section 1 Values"
@@ -170,12 +262,49 @@ jobs:
           
         } >> $GITHUB_STEP_SUMMARY
 
+  # ─────────────────────────────────────────────────────────────────
+  # NEW JOB: Notify Build Start
+  # ─────────────────────────────────────────────────────────────────
+  notify-build-start:
+    runs-on: [self-hosted, node16]
+    needs: [session-management, read-json]
+    if: ${{ needs.session-management.outputs.callback_url != '' }}
+    
+    steps:
+      - name: Send Build Start Notification
+        run: |
+          echo "📡 Sending build start notification..."
+          
+          CALLBACK_URL="${{ needs.session-management.outputs.callback_url }}"
+          SESSION_ID="${{ needs.session-management.outputs.session_id }}"
+          
+          if [ -n "$CALLBACK_URL" ]; then
+            curl -X POST "$CALLBACK_URL" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "session_id": "'$SESSION_ID'",
+                "status": "build_started",
+                "message": "SRF Debug UP build has started",
+                "workflow_run_id": "${{ github.run_id }}",
+                "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",
+                "version": "${{ needs.read-json.outputs.current_version }}",
+                "trigger_source": "${{ needs.session-management.outputs.trigger_source }}",
+                "json_filename": "${{ github.event.inputs.json_filename }}",
+                "build_description": "${{ github.event.inputs.build_description }}"
+              }' || echo "Failed to send start notification"
+          fi
+
   copy-config:
     runs-on: [self-hosted, node16]
-    needs: read-json
+    needs: [session-management, read-json]  # Add session-management dependency
     if: ${{ needs.read-json.outputs.previous_version != '' }}
     
     steps:
+    - name: Session Info Display
+      run: |
+        echo "🔄 Session ID: ${{ needs.session-management.outputs.session_id }}"
+        echo "📡 Triggered by: ${{ needs.session-management.outputs.trigger_source }}"
+        
     - name: Copy Config File, Set Permissions and rename config file with current version
       run: |
         PREV_VERSION="${{ needs.read-json.outputs.previous_version }}"
@@ -351,13 +480,18 @@ jobs:
 
   prepare-config:
     runs-on: [self-hosted, node16]
-    needs: [read-json, copy-config]
+    needs: [session-management, read-json, copy-config]  # Add session-management dependency
     if: ${{ needs.read-json.outputs.current_version != '' }}
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
       
+    - name: Session Info Display
+      run: |
+        echo "🔄 Session ID: ${{ needs.session-management.outputs.session_id }}"
+        echo "📡 Triggered by: ${{ needs.session-management.outputs.trigger_source }}"
+        
     - name: Update Config File with JSON Values
       run: |
         JSON_FILE="${{ needs.read-json.outputs.json_path }}"
@@ -526,7 +660,7 @@ jobs:
 
   upload-config:
     runs-on: [self-hosted, node16]
-    needs: [read-json, copy-config, prepare-config]
+    needs: [session-management, read-json, copy-config, prepare-config]  # Add session-management dependency
     if: ${{ needs.read-json.outputs.current_version != '' }}
     
     steps:
@@ -534,6 +668,11 @@ jobs:
       uses: actions/checkout@v3
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Session Info Display
+      run: |
+        echo "🔄 Session ID: ${{ needs.session-management.outputs.session_id }}"
+        echo "📡 Triggered by: ${{ needs.session-management.outputs.trigger_source }}"
         
     - name: Upload Config File to Repository
       run: |
@@ -617,6 +756,8 @@ jobs:
           echo "📝 Committing changes..."
           git commit -m "Add prepared config file: config_${CURRENT_VERSION}.ini
           
+          - Session ID: ${{ needs.session-management.outputs.session_id }}
+          - Trigger Source: ${{ needs.session-management.outputs.trigger_source }}
           - Generated from JSON: ${{ github.event.inputs.json_filename }}
           - Version: 0x${CURRENT_VERSION}
           - Automated by GitHub Actions workflow
@@ -642,11 +783,16 @@ jobs:
 
   validate-config:
     runs-on: [self-hosted, node16]
-    needs: [read-json, copy-config, prepare-config, upload-config]
+    needs: [session-management, read-json, copy-config, prepare-config, upload-config]  # Add session-management dependency
     outputs:
       config_validated: ${{ steps.validate.outputs.config_validated }}
       config_path: ${{ steps.validate.outputs.config_path }}
     steps:
+      - name: Session Info Display
+        run: |
+          echo "🔄 Session ID: ${{ needs.session-management.outputs.session_id }}"
+          echo "📡 Triggered by: ${{ needs.session-management.outputs.trigger_source }}"
+          
       - name: Validate prepared config file exists
         id: validate
         env:
@@ -695,9 +841,14 @@ jobs:
 
   kerberos-setup:
     runs-on: [self-hosted, node16]
-    needs: [read-json, validate-config]
+    needs: [session-management, read-json, validate-config]  # Add session-management dependency
     if: ${{ needs.validate-config.outputs.config_validated == 'true' }}
     steps:
+      - name: Session Info Display
+        run: |
+          echo "🔄 Session ID: ${{ needs.session-management.outputs.session_id }}"
+          echo "📡 Triggered by: ${{ needs.session-management.outputs.trigger_source }}"
+          
       - name: Switch to build account for Kerberos setup
         env:
           BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
@@ -755,9 +906,14 @@ jobs:
 
   patch-build:
     runs-on: [self-hosted, node16]
-    needs: [read-json, validate-config, kerberos-setup]
+    needs: [session-management, read-json, validate-config, kerberos-setup]  # Add session-management dependency
     if: ${{ needs.validate-config.outputs.config_validated == 'true' }}
     steps:
+      - name: Session Info Display
+        run: |
+          echo "🔄 Session ID: ${{ needs.session-management.outputs.session_id }}"
+          echo "📡 Triggered by: ${{ needs.session-management.outputs.trigger_source }}"
+          
       - name: Switch to faceless account for build
         env:
           BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
@@ -960,6 +1116,8 @@ jobs:
             echo "## 🚀 SRF Debug UP Automated Build Summary"
             echo "| Field | Value |"
             echo "|-------|-------|"
+            echo "| Session ID | \`${{ needs.session-management.outputs.session_id }}\` |"
+            echo "| Trigger Source | \`${{ needs.session-management.outputs.trigger_source }}\` |"
             echo "| Build Type | SRF Debug UP Automated Build |"
             echo "| JSON Source | \`${{ github.event.inputs.json_filename }}\` |"
             echo "| Config File | \`config_${CURRENT_VERSION}.ini\` |"
@@ -969,24 +1127,28 @@ jobs:
             echo "| Account | grp_srf_fit1_build (faceless account) |"
             echo ""
             echo "### 🔄 Complete Pipeline Process:"
-            echo "1. ✅ **JSON Processing**: Extracted values from entry criteria JSON"
-            echo "2. ✅ **Config Preparation**: Copied, updated, and prepared config file"
-            echo "3. ✅ **Repository Upload**: Uploaded prepared config to GitHub"
-            echo "4. ✅ **Config Validation**: Verified prepared config file exists and is readable"
-            echo "5. ✅ **Kerberos Setup**: Initialized ktab and kcron for authentication"
-            echo "6. ✅ **Tool Verification**: Confirmed all build tools are available"
-            echo "7. ✅ **Build Execution**: Executed FXT tool with prepared config"
-            echo "8. ✅ **Result Verification**: Checked for build artifacts"
+            echo "1. ✅ **Session Management**: Initialized session tracking"
+            echo "2. ✅ **JSON Processing**: Extracted values from entry criteria JSON"
+            echo "3. ✅ **Config Preparation**: Copied, updated, and prepared config file"
+            echo "4. ✅ **Repository Upload**: Uploaded prepared config to GitHub"
+            echo "5. ✅ **Config Validation**: Verified prepared config file exists and is readable"
+            echo "6. ✅ **Kerberos Setup**: Initialized ktab and kcron for authentication"
+            echo "7. ✅ **Tool Verification**: Confirmed all build tools are available"
+            echo "8. ✅ **Build Execution**: Executed FXT tool with prepared config"
+            echo "9. ✅ **Result Verification**: Checked for build artifacts"
             echo ""
             echo "### 🎯 Automated Features:"
+            echo "- **Session Tracking**: Complete session management with unique ID"
             echo "- **JSON-Driven**: Automatically extracts all values from entry criteria JSON"
             echo "- **Config Generation**: Creates properly configured build file"
             echo "- **Version Management**: Handles version extraction and file naming"
             echo "- **Path Updates**: Updates all staging area paths from JSON"
             echo "- **Security**: Uses GitHub Secrets for password management"
             echo "- **Full Pipeline**: Complete end-to-end automation"
+            echo "- **Callback Support**: Two-way communication with trigger source"
             echo ""
             echo "### 📊 Build Configuration:"
+            echo "- **Session ID**: ${{ needs.session-management.outputs.session_id }}"
             echo "- **Source JSON**: ${{ github.event.inputs.json_filename }}"
             echo "- **Generated Config**: config_${CURRENT_VERSION}.ini"
             echo "- **GitHub Repository**: [View Config](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/output_paths/config_${CURRENT_VERSION}.ini)"
@@ -1000,10 +1162,15 @@ jobs:
   # ─────────────────────────────────────────────────────────────────
   copy-release-collaterals:
     runs-on: [self-hosted, node16]
-    needs: [read-json, patch-build]
+    needs: [session-management, read-json, patch-build]  # Add session-management dependency
     if: ${{ success() }}
 
     steps:
+      - name: Session Info Display
+        run: |
+          echo "🔄 Session ID: ${{ needs.session-management.outputs.session_id }}"
+          echo "📡 Triggered by: ${{ needs.session-management.outputs.trigger_source }}"
+          
       - name: Copy release collaterals (.inc and .pdb) to SRF host
         env:
           SRF_PASSWORD: ${{ secrets.SRF_PASSWORD }}
@@ -1128,16 +1295,112 @@ jobs:
   # JOB: SSH Login — calls testing.yml after copy-release-collaterals
   # ─────────────────────────────────────────────────────────────────
   call-srf-login:
-    needs: [copy-release-collaterals]
+    needs: [session-management, copy-release-collaterals]  # Add session-management dependency
     if: ${{ success() }}
     uses: PrathyushaKummara23/UPIBR-automation/.github/workflows/loginsrf.yml@master
     secrets: inherit
+    with:
+      session_id: ${{ needs.session-management.outputs.session_id }}
+      trigger_source: ${{ needs.session-management.outputs.trigger_source }}
+      callback_url: ${{ needs.session-management.outputs.callback_url }}
 
    # ─────────────────────────────────────────────────────────────────
   # JOB: Read pipeline result — calls Read_Pipeline_Result.yml
   # ─────────────────────────────────────────────────────────────────
   call-read-pipeline-result:
-    needs: [call-srf-login]
+    needs: [session-management, call-srf-login]  # Add session-management dependency
     if: ${{ success() }}
     uses: PrathyushaKummara23/UPIBR-automation/.github/workflows/Read_Pipeline_Result.yml@master
     secrets: inherit
+    with:
+      session_id: ${{ needs.session-management.outputs.session_id }}
+      trigger_source: ${{ needs.session-management.outputs.trigger_source }}
+      callback_url: ${{ needs.session-management.outputs.callback_url }}
+
+  # ─────────────────────────────────────────────────────────────────
+  # NEW JOB: Final Callback Notification
+  # ─────────────────────────────────────────────────────────────────
+  notify-final-result:
+    runs-on: ubuntu-latest
+    needs: [session-management, read-json, patch-build, copy-release-collaterals, call-read-pipeline-result]
+    if: ${{ always() && needs.session-management.outputs.callback_url != '' }}
+    
+    steps:
+      - name: Download Pipeline Status Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pipeline-status
+          path: ./artifacts/
+        continue-on-error: true
+
+      - name: Send Final Result Notification
+        run: |
+          echo "📡 Sending final result notification..."
+          
+          CALLBACK_URL="${{ needs.session-management.outputs.callback_url }}"
+          SESSION_ID="${{ needs.session-management.outputs.session_id }}"
+          
+          # Read pipeline status from artifact if available
+          PIPELINE_STATUS="UNKNOWN"
+          if [ -f "./artifacts/Output_pipeline_Status.txt" ]; then
+            PIPELINE_STATUS=$(cat ./artifacts/Output_pipeline_Status.txt)
+            echo "📋 Pipeline Status from artifact: $PIPELINE_STATUS"
+          else
+            echo "⚠️  Pipeline status artifact not found"
+          fi
+          
+          # Determine overall build status
+          BUILD_STATUS="unknown"
+          BUILD_MESSAGE="Build completed with unknown status"
+          
+          if [ "${{ needs.patch-build.result }}" = "success" ] && [ "${{ needs.copy-release-collaterals.result }}" = "success" ]; then
+            if [ "$PIPELINE_STATUS" = "PASSED" ]; then
+              BUILD_STATUS="success"
+              BUILD_MESSAGE="SRF Debug UP build and pipeline completed successfully"
+            elif [ "$PIPELINE_STATUS" = "FAILED" ]; then
+              BUILD_STATUS="pipeline_failed"
+              BUILD_MESSAGE="SRF Debug UP build completed but pipeline failed"
+            elif [ "$PIPELINE_STATUS" = "RUNNING" ]; then
+              BUILD_STATUS="pipeline_running"
+              BUILD_MESSAGE="SRF Debug UP build completed, pipeline still running"
+            else
+              BUILD_STATUS="build_success_pipeline_unknown"
+              BUILD_MESSAGE="SRF Debug UP build completed successfully, pipeline status unknown"
+            fi
+          else
+            BUILD_STATUS="build_failed"
+            BUILD_MESSAGE="SRF Debug UP build failed"
+          fi
+          
+          echo "📊 Final Status: $BUILD_STATUS"
+          echo "📝 Final Message: $BUILD_MESSAGE"
+          
+          if [ -n "$CALLBACK_URL" ]; then
+            curl -X POST "$CALLBACK_URL" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "session_id": "'$SESSION_ID'",
+                "status": "'$BUILD_STATUS'",
+                "message": "'$BUILD_MESSAGE'",
+                "workflow_run_id": "${{ github.run_id }}",
+                "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",
+                "version": "${{ needs.read-json.outputs.current_version }}",
+                "trigger_source": "${{ needs.session-management.outputs.trigger_source }}",
+                "pipeline_status": "'$PIPELINE_STATUS'",
+                "build_results": {
+                  "patch_build": "${{ needs.patch-build.result }}",
+                  "copy_collaterals": "${{ needs.copy-release-collaterals.result }}",
+                  "srf_login": "${{ needs.call-srf-login.result }}",
+                  "pipeline_result": "${{ needs.call-read-pipeline-result.result }}"
+                },
+                "final_summary": {
+                  "json_filename": "${{ github.event.inputs.json_filename }}",
+                  "build_description": "${{ github.event.inputs.build_description }}",
+                  "config_file": "config_${{ needs.read-json.outputs.current_version }}.ini",
+                  "github_repository": "${{ github.repository }}",
+                  "workflow_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                }
+              }' || echo "Failed to send final notification"
+          else
+            echo "ℹ️  No callback URL provided, skipping notification"
+          fi
