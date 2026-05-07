@@ -8,8 +8,8 @@ jobs:
     runs-on: [self-hosted, Windows, X64]
 
     steps:
-      - name: Run run_build.ps1 via Task Scheduler
+      - name: Run run_build.ps1 detached via WMI
         shell: powershell
         run: |
-          schtasks /create /tn "RunBuild" /tr "powershell -WindowStyle Normal -File C:\Users\pkummara\run_build.ps1" /sc once /st 00:00 /rl HIGHEST /it /f
-          schtasks /run /tn "RunBuild"
+          $wmi = [wmiclass]"\\.\root\cimv2:Win32_Process"
+          $wmi.Create("powershell -NoExit -WindowStyle Normal -File C:\Users\pkummara\run_build.ps1")
