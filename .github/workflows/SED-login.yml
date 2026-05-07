@@ -1,7 +1,7 @@
 name: Run SEDBuild on Windows
 
 on:
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
 
 jobs:
   run-build:
@@ -11,4 +11,4 @@ jobs:
       - name: Run run_build.ps1
         shell: powershell
         run: |
-          C:\Users\pkummara\run_build.ps1
+          & "C:\Users\pkummara\run_build.ps1"
