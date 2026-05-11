@@ -1,7 +1,12 @@
-name: Run PROD Build on Windows
+name: Run SRF PROD Build on Windows
 
 on:
   workflow_dispatch:
+    inputs:
+      resume_from:
+        description: "Optional: enter soc or fit1 only for resume builds"
+        required: false
+        type: string
 
 jobs:
   run-build:
@@ -11,5 +16,6 @@ jobs:
       - name: Run run_build.ps1 detached via WMI
         shell: powershell
         run: |
+          $resumeFrom = "${{ github.event.inputs.resume_from }}"
           $wmi = [wmiclass]"\\.\root\cimv2:Win32_Process"
-          $wmi.Create("powershell -NoExit -WindowStyle Normal -File C:\Users\pkummara\run_build_prod.ps1")
+          $wmi.Create("powershell -NoExit -WindowStyle Normal -File C:\Users\pkummara\run_build_prod.ps1 -ResumeFrom '$resumeFrom'")
