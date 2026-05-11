@@ -1,4 +1,4 @@
-name: Run Build on Windows
+name: Run PROD Build on Windows
 
 on:
   workflow_dispatch:
