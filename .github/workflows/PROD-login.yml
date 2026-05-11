@@ -13,9 +13,21 @@ jobs:
     runs-on: [self-hosted, Windows, X64]
 
     steps:
-      - name: Run run_build.ps1 detached via WMI
+      - name: Run run_build_prod.ps1 detached via WMI
         shell: powershell
         run: |
-          $resumeFrom = "${{ github.event.inputs.resume_from }}"
+          $resumeFrom = "${{ github.event.inputs.resume_from }}".Trim()
+
+          if ([string]::IsNullOrWhiteSpace($resumeFrom)) {
+            $command = "powershell -NoExit -WindowStyle Normal -File C:\Users\pkummara\run_build_prod.ps1"
+          } else {
+            $command = "powershell -NoExit -WindowStyle Normal -File C:\Users\pkummara\run_build_prod.ps1 -ResumeFrom $resumeFrom"
+          }
+
+          Write-Host "Launching: $command"
+
           $wmi = [wmiclass]"\\.\root\cimv2:Win32_Process"
-          $wmi.Create("powershell -NoExit -WindowStyle Normal -File C:\Users\pkummara\run_build_prod.ps1 -ResumeFrom '$resumeFrom'")
+          $result = $wmi.Create($command)
+
+          Write-Host "WMI Create ReturnValue: $($result.ReturnValue)"
+          Write-Host "Started PID: $($result.ProcessId)"
