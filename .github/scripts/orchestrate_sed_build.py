@@ -6,7 +6,6 @@ import os
 import subprocess
 import sys
 import time
-import urllib.request
 
 SOC_TRIGGER = "soc_sign_trigger.txt"
 SOC_DONE = "soc_sign_done.txt"
@@ -19,29 +18,50 @@ STAGE_DONE_TIMEOUT_SECONDS = 24 * 60 * 60
 
 def log(msg):
     print(msg, flush=True)
-
-
+    
 def send_workflow_dispatch(repo, workflow_file, github_token, inputs):
+    ref = os.environ.get("GITHUB_REF_NAME", "main")
     url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_file}/dispatches"
-    payload = {"ref": os.environ.get("GITHUB_REF_NAME", "main"), "inputs": inputs}
-    data = json.dumps(payload).encode("utf-8")
 
-    req = urllib.request.Request(
+    payload = json.dumps({
+        "ref": ref,
+        "inputs": inputs
+    })
+
+    cmd = [
+        "curl",
+        "-L",
+        "-X", "POST",
         url,
-        data=data,
-        method="POST",
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {github_token}",
-            "Content-Type": "application/json",
-        },
-    )
+        "-H", "Accept: application/vnd.github+json",
+        "-H", f"Authorization: Bearer {github_token}",
+        "-H", "Content-Type: application/json",
+        "-d", payload,
+        "-o", "/tmp/dispatch_response.txt",
+        "-w", "%{http_code}",
+    ]
 
-    with urllib.request.urlopen(req) as resp:
-        status = resp.getcode()
-        if status not in (204, 201):
-            raise RuntimeError(f"Workflow dispatch failed for {workflow_file} with status {status}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
 
+    http_code = result.stdout.strip()
+    response_body = ""
+    if os.path.exists("/tmp/dispatch_response.txt"):
+        with open("/tmp/dispatch_response.txt", "r", encoding="utf-8", errors="ignore") as f:
+            response_body = f.read()
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"curl dispatch failed for {workflow_file}. "
+            f"returncode={result.returncode}, stderr={result.stderr}"
+        )
+
+    if http_code not in ("204", "201"):
+        raise RuntimeError(
+            f"Workflow dispatch failed for {workflow_file}. "
+            f"http_code={http_code}, response={response_body}"
+        )
+
+    log(f"[OK] Workflow dispatch accepted for {workflow_file} (HTTP {http_code})")
 
 def wait_for_done(done_path, label, timeout_seconds=STAGE_DONE_TIMEOUT_SECONDS):
     log(f"[INFO] Waiting for {label} done file: {done_path}")
