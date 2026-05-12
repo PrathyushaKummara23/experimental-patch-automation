@@ -1,0 +1,34 @@
+name: SED FIT1 Signing
+
+on:
+  workflow_dispatch:
+    inputs:
+      session_id:
+        description: "Session ID"
+        required: false
+        type: string
+      trigger_source:
+        description: "Trigger source"
+        required: false
+        type: string
+      callback_url:
+        description: "Callback URL"
+        required: false
+        type: string
+
+jobs:
+  fit1-sign:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 1440
+
+    steps:
+      - name: Display session information
+        shell: powershell
+        run: |
+          Write-Host "Session ID     : ${{ github.event.inputs.session_id }}"
+          Write-Host "Trigger Source : ${{ github.event.inputs.trigger_source }}"
+
+      - name: Run FIT1 signing
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File "C:\Users\pkummara\watch_and_sign_fit1.ps1"
