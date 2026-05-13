@@ -125,8 +125,15 @@ def main():
     last_soc_token = initial_soc_token
     last_fit1_token = initial_fit1_token
 
-    soc_dispatched = args.resume_from in ("soc", "fit1")
-    fit1_dispatched = args.resume_from == "fit1"
+    if args.resume_from == "fit1":
+        soc_dispatched = True
+        fit1_dispatched = False
+    elif args.resume_from == "soc":
+        soc_dispatched = False
+        fit1_dispatched = False
+    else:
+        soc_dispatched = False
+        fit1_dispatched = False
 
     build_cmd = [args.build_command]
     if args.resume_from:
@@ -138,6 +145,7 @@ def main():
     log(f"[INFO] Resume mode: {args.resume_from or 'normal'}")
     log(f"[INFO] Initial SOC trigger token : {initial_soc_token or '<none>'}")
     log(f"[INFO] Initial FIT1 trigger token: {initial_fit1_token or '<none>'}")
+    log(f"[INFO] Initial soc_dispatched={soc_dispatched}, fit1_dispatched={fit1_dispatched}")
 
     process = subprocess.Popen(build_cmd)
 
@@ -202,7 +210,7 @@ def main():
         if soc_dispatched and not os.path.exists(soc_done_path) and args.resume_from not in ("soc", "fit1"):
             wait_for_done(soc_done_path, "SOC")
 
-        if fit1_dispatched and not os.path.exists(fit1_done_path) and args.resume_from != "fit1":
+        if fit1_dispatched and not os.path.exists(fit1_done_path):
             wait_for_done(fit1_done_path, "FIT1")
 
         log("[OK] Orchestrated build completed successfully")
