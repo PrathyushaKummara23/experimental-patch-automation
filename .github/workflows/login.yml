@@ -59,7 +59,7 @@ jobs:
   # NEW JOB: Session Management
   # ─────────────────────────────────────────────────────────────────
   session-management:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, node16]
     outputs:
       session_id: ${{ steps.session.outputs.session_id }}
       trigger_source: ${{ steps.session.outputs.trigger_source }}
@@ -116,7 +116,7 @@ jobs:
           echo "✅ Session initialization completed"
 
   read-json:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, node16]
     needs: session-management  # Add dependency
     outputs:
       json_path: ${{ steps.validate.outputs.json_path }}
@@ -266,7 +266,7 @@ jobs:
   # NEW JOB: Notify Build Start
   # ─────────────────────────────────────────────────────────────────
   notify-build-start:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, node16]
     needs: [session-management, read-json]
     if: ${{ needs.session-management.outputs.callback_url != '' }}
     
@@ -293,7 +293,7 @@ jobs:
           fi
 
   copy-config:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, node16]
     needs: [session-management, read-json]  # Add session-management dependency
     if: ${{ needs.read-json.outputs.previous_version != '' }}
     
@@ -477,7 +477,7 @@ jobs:
         echo "✅ Config file copy, permission, and rename operation completed successfully!"
 
   prepare-config:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, node16]
     needs: [session-management, read-json, copy-config]  # Add session-management dependency
     if: ${{ needs.read-json.outputs.current_version != '' }}
     
@@ -657,7 +657,7 @@ jobs:
         echo "✅ Operation Status: SUCCESS"
 
   upload-config:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, node16]
     needs: [session-management, read-json, copy-config, prepare-config]  # Add session-management dependency
     if: ${{ needs.read-json.outputs.current_version != '' }}
     
@@ -780,7 +780,7 @@ jobs:
         echo "✅ Config file upload operation completed successfully!"
 
   validate-config:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, node16]
     needs: [session-management, read-json, copy-config, prepare-config, upload-config]  # Add session-management dependency
     outputs:
       config_validated: ${{ steps.validate.outputs.config_validated }}
@@ -838,7 +838,7 @@ jobs:
           echo "=== END PREPARED CONFIG FILE CONTENTS ==="
 
   kerberos-setup:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, node16]
     needs: [session-management, read-json, validate-config]  # Add session-management dependency
     if: ${{ needs.validate-config.outputs.config_validated == 'true' }}
     steps:
@@ -903,7 +903,7 @@ jobs:
           fi
 
   patch-build:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, node16]
     needs: [session-management, read-json, validate-config, kerberos-setup]  # Add session-management dependency
     if: ${{ needs.validate-config.outputs.config_validated == 'true' }}
     steps:
@@ -1154,123 +1154,13 @@ jobs:
             echo "🎉 **SRF Debug UP automated build pipeline completed successfully!**"
             
           } >> $GITHUB_STEP_SUMMARY
-  read-inc-values:
-    runs-on: [self-hosted, Linux, X64]
-    needs: [session-management, read-json, patch-build]
-    if: ${{ needs.patch-build.result == 'success' }}
-    outputs:
-      patch_id: ${{ steps.extract.outputs.patch_id }}
-      min_runtime: ${{ steps.extract.outputs.min_runtime }}
-      svn: ${{ steps.extract.outputs.svn }}
-      se_svn: ${{ steps.extract.outputs.se_svn }}
-      inc_file: ${{ steps.extract.outputs.inc_file }}
 
-    steps:
-      - name: Session Info Display
-        run: |
-          echo "🔄 Session ID: ${{ needs.session-management.outputs.session_id }}"
-          echo "📡 Triggered by: ${{ needs.session-management.outputs.trigger_source }}"
-
-      - name: Extract values from INC file
-        id: extract
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          CURRENT_VERSION="${{ needs.read-json.outputs.current_version }}"
-          RELEASE_DIR="/nfs/site/disks/dcsg_0729/patches/SRF/C0/build/${CURRENT_VERSION}/release"
-          OUTPUT_FILE="inc_values_${CURRENT_VERSION}.txt"
-
-          echo "📁 Release directory: ${RELEASE_DIR}"
-
-          if [[ ! -d "${RELEASE_DIR}" ]]; then
-            echo "❌ ERROR: Release directory not found: ${RELEASE_DIR}"
-            exit 1
-          fi
-
-          echo "================ Directory Contents ================"
-          ls -lah "${RELEASE_DIR}"
-
-          echo
-          echo "================ Finding INC file ================"
-
-          INC_FILE="$(find "${RELEASE_DIR}" -maxdepth 1 -type f -name 'm_*_*.inc' ! -name '*_nxh.inc' | head -n 1)"
-
-          if [[ -z "${INC_FILE}" ]]; then
-            echo "❌ ERROR: No matching non-NXH INC file found in ${RELEASE_DIR}"
-            exit 1
-          fi
-
-          echo "✅ Selected INC file: ${INC_FILE}"
-
-          patch_id="$(grep -i 'Patch ID' "${INC_FILE}" | sed -E 's/^[[:space:]]*dd[[:space:]]+([0-9A-Fa-f]+h).*/\1/' | head -n 1)"
-          min_runtime="$(grep -i 'Minimum Runtime Update Revision' "${INC_FILE}" | sed -E 's/^[[:space:]]*dd[[:space:]]+([0-9A-Fa-f]+h).*/\1/' | head -n 1)"
-          svn="$(grep -Ei '^[[:space:]]*dd[[:space:]]+[0-9A-Fa-f]+h[[:space:]]*;[[:space:]]*00040h[[:space:]]+SVN' "${INC_FILE}" | sed -E 's/^[[:space:]]*dd[[:space:]]+([0-9A-Fa-f]+h).*/\1/' | head -n 1)"
-          se_svn="$(grep -i 'SE_SVN' "${INC_FILE}" | sed -E 's/^[[:space:]]*dd[[:space:]]+([0-9A-Fa-f]+h).*/\1/' | head -n 1)"
-
-          if [[ -z "${patch_id}" || -z "${min_runtime}" || -z "${svn}" || -z "${se_svn}" ]]; then
-            echo "❌ ERROR: Failed to extract one or more required values from ${INC_FILE}"
-            echo "patch_id='${patch_id}'"
-            echo "min_runtime='${min_runtime}'"
-            echo "svn='${svn}'"
-            echo "se_svn='${se_svn}'"
-            exit 1
-          fi
-
-          echo
-          echo "================ Extracted Values ================"
-          echo "${patch_id}"
-          echo "${min_runtime}"
-          echo "${svn}"
-          echo "${se_svn}"
-
-          cat > "${OUTPUT_FILE}" <<EOF
-          ${patch_id}
-          ${min_runtime}
-          ${svn}
-          ${se_svn}
-          EOF
-
-          echo "✅ Output file created: ${OUTPUT_FILE}"
-
-          echo "inc_file=${INC_FILE}" >> "$GITHUB_OUTPUT"
-          echo "patch_id=${patch_id}" >> "$GITHUB_OUTPUT"
-          echo "min_runtime=${min_runtime}" >> "$GITHUB_OUTPUT"
-          echo "svn=${svn}" >> "$GITHUB_OUTPUT"
-          echo "se_svn=${se_svn}" >> "$GITHUB_OUTPUT"
-
-      - name: Upload INC extracted values as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: inc-values-${{ needs.read-json.outputs.current_version }}
-          path: inc_values_${{ needs.read-json.outputs.current_version }}.txt
-          if-no-files-found: error
-
-      - name: Add INC values to summary
-        shell: bash
-        run: |
-          {
-            echo ""
-            echo "## 📄 INC File Extracted Values"
-            echo "| Field | Value |"
-            echo "|-------|-------|"
-            echo "| INC File | \`${{ steps.extract.outputs.inc_file }}\` |"
-            echo "| Patch ID | \`${{ steps.extract.outputs.patch_id }}\` |"
-            echo "| Minimum Runtime Update Revision | \`${{ steps.extract.outputs.min_runtime }}\` |"
-            echo "| SVN | \`${{ steps.extract.outputs.svn }}\` |"
-            echo "| SE_SVN | \`${{ steps.extract.outputs.se_svn }}\` |"
-            echo ""
-            echo "### Raw Output"
-            echo '```text'
-            cat "inc_values_${{ needs.read-json.outputs.current_version }}.txt"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
   # ─────────────────────────────────────────────────────────────────
   # JOB: Copy Release Collaterals — runs on Linux runner after patch-build
   # ─────────────────────────────────────────────────────────────────
   copy-release-collaterals:
-    runs-on: [self-hosted, Linux, X64]
-    needs: [session-management, read-json, patch-build, read-inc-values]  # Add session-management dependency
+    runs-on: [self-hosted, node16]
+    needs: [session-management, read-json, patch-build]  # Add session-management dependency
     if: ${{ success() }}
 
     steps:
@@ -1429,8 +1319,8 @@ jobs:
   # NEW JOB: Final Callback Notification
   # ─────────────────────────────────────────────────────────────────
   notify-final-result:
-    runs-on: [self-hosted, Linux, X64]
-    needs: [session-management, read-json, patch-build, read-inc-values, copy-release-collaterals, call-srf-login, call-read-pipeline-result]
+    runs-on: [self-hosted, node16]
+    needs: [session-management, read-json, patch-build, copy-release-collaterals, call-read-pipeline-result]
     if: ${{ always() && needs.session-management.outputs.callback_url != '' }}
     
     steps:
@@ -1448,6 +1338,7 @@ jobs:
           CALLBACK_URL="${{ needs.session-management.outputs.callback_url }}"
           SESSION_ID="${{ needs.session-management.outputs.session_id }}"
           
+          # Read pipeline status from artifact if available
           PIPELINE_STATUS="UNKNOWN"
           if [ -f "./artifacts/Output_pipeline_Status.txt" ]; then
             PIPELINE_STATUS=$(cat ./artifacts/Output_pipeline_Status.txt)
@@ -1456,6 +1347,7 @@ jobs:
             echo "⚠️  Pipeline status artifact not found"
           fi
           
+          # Determine overall build status
           BUILD_STATUS="unknown"
           BUILD_MESSAGE="Build completed with unknown status"
           
@@ -1482,7 +1374,7 @@ jobs:
           echo "📝 Final Message: $BUILD_MESSAGE"
           
           if [ -n "$CALLBACK_URL" ]; then
-            PAYLOAD=$(printf '{"session_id":"%s","status":"%s","message":"%s","workflow_run_id":"%s","timestamp":"%s","version":"%s","trigger_source":"%s","pipeline_status":"%s","inc_values":{"patch_id":"%s","min_runtime":"%s","svn":"%s","se_svn":"%s"},"build_results":{"patch_build":"%s","read_inc_values":"%s","copy_collaterals":"%s","srf_login":"%s","pipeline_result":"%s"},"final_summary":{"json_filename":"%s","build_description":"%s","config_file":"%s","github_repository":"%s","workflow_url":"%s"}}' \
+            PAYLOAD=$(printf '{"session_id":"%s","status":"%s","message":"%s","workflow_run_id":"%s","timestamp":"%s","version":"%s","trigger_source":"%s","pipeline_status":"%s","build_results":{"patch_build":"%s","copy_collaterals":"%s","srf_login":"%s","pipeline_result":"%s"},"final_summary":{"json_filename":"%s","build_description":"%s","config_file":"%s","github_repository":"%s","workflow_url":"%s"}}' \
               "$SESSION_ID" \
               "$BUILD_STATUS" \
               "$BUILD_MESSAGE" \
@@ -1491,12 +1383,7 @@ jobs:
               "${{ needs.read-json.outputs.current_version }}" \
               "${{ needs.session-management.outputs.trigger_source }}" \
               "$PIPELINE_STATUS" \
-              "${{ needs.read-inc-values.outputs.patch_id }}" \
-              "${{ needs.read-inc-values.outputs.min_runtime }}" \
-              "${{ needs.read-inc-values.outputs.svn }}" \
-              "${{ needs.read-inc-values.outputs.se_svn }}" \
               "${{ needs.patch-build.result }}" \
-              "${{ needs.read-inc-values.result }}" \
               "${{ needs.copy-release-collaterals.result }}" \
               "${{ needs.call-srf-login.result }}" \
               "${{ needs.call-read-pipeline-result.result }}" \
