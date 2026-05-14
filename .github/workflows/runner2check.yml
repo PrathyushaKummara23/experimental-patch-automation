@@ -32,4 +32,4 @@ jobs:
           echo "Selected INC file: ${INC_FILE}"
           echo
           echo "================ First 50 lines of INC File ================"
-          head -n 50 "${INC_FILE}"
+          head -n 100 "${INC_FILE}"
