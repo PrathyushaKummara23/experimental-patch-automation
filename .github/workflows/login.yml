@@ -59,7 +59,7 @@ jobs:
   # NEW JOB: Session Management
   # ─────────────────────────────────────────────────────────────────
   session-management:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       session_id: ${{ steps.session.outputs.session_id }}
       trigger_source: ${{ steps.session.outputs.trigger_source }}
@@ -116,7 +116,7 @@ jobs:
           echo "✅ Session initialization completed"
 
   read-json:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     needs: session-management  # Add dependency
     outputs:
       json_path: ${{ steps.validate.outputs.json_path }}
@@ -266,7 +266,7 @@ jobs:
   # NEW JOB: Notify Build Start
   # ─────────────────────────────────────────────────────────────────
   notify-build-start:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     needs: [session-management, read-json]
     if: ${{ needs.session-management.outputs.callback_url != '' }}
     
@@ -293,7 +293,7 @@ jobs:
           fi
 
   copy-config:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     needs: [session-management, read-json]  # Add session-management dependency
     if: ${{ needs.read-json.outputs.previous_version != '' }}
     
@@ -477,7 +477,7 @@ jobs:
         echo "✅ Config file copy, permission, and rename operation completed successfully!"
 
   prepare-config:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     needs: [session-management, read-json, copy-config]  # Add session-management dependency
     if: ${{ needs.read-json.outputs.current_version != '' }}
     
@@ -657,7 +657,7 @@ jobs:
         echo "✅ Operation Status: SUCCESS"
 
   upload-config:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     needs: [session-management, read-json, copy-config, prepare-config]  # Add session-management dependency
     if: ${{ needs.read-json.outputs.current_version != '' }}
     
@@ -780,7 +780,7 @@ jobs:
         echo "✅ Config file upload operation completed successfully!"
 
   validate-config:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     needs: [session-management, read-json, copy-config, prepare-config, upload-config]  # Add session-management dependency
     outputs:
       config_validated: ${{ steps.validate.outputs.config_validated }}
@@ -838,7 +838,7 @@ jobs:
           echo "=== END PREPARED CONFIG FILE CONTENTS ==="
 
   kerberos-setup:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     needs: [session-management, read-json, validate-config]  # Add session-management dependency
     if: ${{ needs.validate-config.outputs.config_validated == 'true' }}
     steps:
@@ -903,7 +903,7 @@ jobs:
           fi
 
   patch-build:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     needs: [session-management, read-json, validate-config, kerberos-setup]  # Add session-management dependency
     if: ${{ needs.validate-config.outputs.config_validated == 'true' }}
     steps:
@@ -1155,7 +1155,7 @@ jobs:
             
           } >> $GITHUB_STEP_SUMMARY
   read-inc-values:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     needs: [session-management, read-json, patch-build]
     if: ${{ needs.patch-build.result == 'success' }}
     outputs:
@@ -1269,7 +1269,7 @@ jobs:
   # JOB: Copy Release Collaterals — runs on Linux runner after patch-build
   # ─────────────────────────────────────────────────────────────────
   copy-release-collaterals:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     needs: [session-management, read-json, patch-build, read-inc-values]  # Add session-management dependency
     if: ${{ success() }}
 
@@ -1429,7 +1429,7 @@ jobs:
   # NEW JOB: Final Callback Notification
   # ─────────────────────────────────────────────────────────────────
   notify-final-result:
-    runs-on: [self-hosted, Linux, X64, label]
+    runs-on: [self-hosted, Linux, X64]
     needs: [session-management, read-json, patch-build, read-inc-values, copy-release-collaterals, call-srf-login, call-read-pipeline-result]
     if: ${{ always() && needs.session-management.outputs.callback_url != '' }}
     
