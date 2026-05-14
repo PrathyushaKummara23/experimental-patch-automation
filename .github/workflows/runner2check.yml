@@ -1,4 +1,4 @@
-name: Read Release Directory and INC File
+name: Read Selected Values from INC File
 
 on:
   workflow_dispatch:
@@ -8,19 +8,12 @@ jobs:
     runs-on: [self-hosted, Linux, X64, label-2]
 
     steps:
-      - name: Inspect release directory and read first 50 lines of non-NXH INC file
+      - name: Extract selected INC values
         shell: bash
         run: |
           set -euo pipefail
 
           RELEASE_DIR="/nfs/site/disks/dcsg_0729/patches/SRF/C0/build/13000393/release"
-
-          echo "Release directory: ${RELEASE_DIR}"
-          echo "================ Directory Contents ================"
-          ls -lah "${RELEASE_DIR}"
-
-          echo
-          echo "================ Finding INC file ================"
 
           INC_FILE="$(find "${RELEASE_DIR}" -maxdepth 1 -type f -name 'm_*_*.inc' ! -name '*_nxh.inc' | head -n 1)"
 
@@ -29,7 +22,12 @@ jobs:
             exit 1
           fi
 
-          echo "Selected INC file: ${INC_FILE}"
-          echo
-          echo "================ First 50 lines of INC File ================"
-          head -n 100 "${INC_FILE}"
+          patch_id="$(grep -i 'Patch ID' "${INC_FILE}" | sed -E 's/^[[:space:]]*dd[[:space:]]+([0-9A-Fa-f]+h).*/\1/')"
+          min_runtime="$(grep -i 'Minimum Runtime Update Revision' "${INC_FILE}" | sed -E 's/^[[:space:]]*dd[[:space:]]+([0-9A-Fa-f]+h).*/\1/')"
+          svn="$(grep -Ei '^[[:space:]]*dd[[:space:]]+[0-9A-Fa-f]+h[[:space:]]*;[[:space:]]*00040h[[:space:]]+SVN' "${INC_FILE}" | sed -E 's/^[[:space:]]*dd[[:space:]]+([0-9A-Fa-f]+h).*/\1/')"
+          se_svn="$(grep -i 'SE_SVN' "${INC_FILE}" | sed -E 's/^[[:space:]]*dd[[:space:]]+([0-9A-Fa-f]+h).*/\1/')"
+
+          echo "${patch_id}"
+          echo "${min_runtime}"
+          echo "${svn}"
+          echo "${se_svn}"
