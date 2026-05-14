@@ -1,14 +1,48 @@
-name: Test runner2
+name: Read INC File
 
 on:
   workflow_dispatch:
+    inputs:
+      build_id:
+        description: "Build number"
+        required: true
+        default: "13000393"
 
 jobs:
-  test:
+  read-inc:
     runs-on: [self-hosted, Linux, X64, label-2]
+
     steps:
-      - name: Check machine
+      - name: Read INC file from release folder
+        shell: bash
         run: |
-          hostname
-          pwd
-          nproc
+          set -euo pipefail
+
+          BUILD_ID="${{ github.event.inputs.build_id }}"
+          RELEASE_DIR="/nfs/site/disks/dcsg_0729/patches/SRF/C0/build/${BUILD_ID}/release"
+
+          echo "Release directory: ${RELEASE_DIR}"
+          echo "================ Directory Contents ================"
+
+          if [ ! -d "${RELEASE_DIR}" ]; then
+            echo "ERROR: Release directory not found: ${RELEASE_DIR}"
+            exit 1
+          fi
+
+          ls -la "${RELEASE_DIR}"
+
+          echo
+          echo "================ Finding INC file ================"
+
+          INC_FILE=$(find "${RELEASE_DIR}" -maxdepth 1 -type f -name "m_*.inc" ! -name "*_nxh.inc" | head -n 1)
+
+          if [ -z "${INC_FILE}" ]; then
+            echo "ERROR: No matching non-NXH INC file found in ${RELEASE_DIR}"
+            exit 1
+          fi
+
+          echo "Selected INC file: ${INC_FILE}"
+
+          echo
+          echo "================ INC File Contents ================"
+          cat "${INC_FILE}"
