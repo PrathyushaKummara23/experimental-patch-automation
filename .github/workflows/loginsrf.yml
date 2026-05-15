@@ -42,20 +42,24 @@ on:
 jobs:
   srf-login:
     name: SRF SSH Login
-    runs-on: [self-hosted, node16]
+    runs-on: [self-hosted, Linux, X64]
 
     steps:
       - name: Session Info Display
         if: ${{ inputs.session_id != '' }}
+        shell: bash
         run: |
-          echo "🔄 Session ID: ${{ inputs.session_id }}"
-          echo "📡 Triggered by: ${{ inputs.trigger_source }}"
-          echo "🔗 Callback URL: ${{ inputs.callback_url }}"
+          echo "Session ID: ${{ inputs.session_id }}"
+          echo "Triggered by: ${{ inputs.trigger_source }}"
+          echo "Callback URL: ${{ inputs.callback_url }}"
 
       - name: SSH into SRF host and run deploy_reboot_wrapper.py
         env:
           SRF_PASSWORD: ${{ secrets.SRF_PASSWORD }}
+        shell: bash
         run: |
+          set -e
+
           echo "================================================="
           echo "  SRF SSH Login - Post Build Auto Login"
           echo "================================================="
@@ -102,16 +106,17 @@ jobs:
           rm -f /tmp/ssh_login_${{ github.run_id }}.exp
 
           if [ $SSH_EXIT -eq 0 ]; then
-            echo "✅ SUCCESS: SSH login and command executed successfully!"
+            echo "SUCCESS: SSH login and command executed successfully"
           else
-            echo "❌ FAILURE: SSH connection failed with exit code: $SSH_EXIT"
+            echo "FAILURE: SSH connection failed with exit code: $SSH_EXIT"
             exit $SSH_EXIT
           fi
 
       - name: Send SRF Login Notification
         if: ${{ inputs.callback_url != '' }}
+        shell: bash
         run: |
-          echo "📡 Sending SRF login notification..."
+          echo "Sending SRF login notification..."
 
           CALLBACK_URL="${{ inputs.callback_url }}"
           SESSION_ID="${{ inputs.session_id }}"
@@ -127,5 +132,5 @@ jobs:
               -H "Content-Type: application/json" \
               -d "$PAYLOAD" || echo "Failed to send SRF login notification"
           else
-            echo "ℹ️  No callback URL provided, skipping notification"
+            echo "No callback URL provided, skipping notification"
           fi
