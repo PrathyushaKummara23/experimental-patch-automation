@@ -68,9 +68,6 @@ jobs:
         run: |
           set -e
 
-          echo "Initializing Session Management"
-          echo "=================================================="
-
           if [ -n "${{ github.event.inputs.session_id }}" ]; then
             SESSION_ID="${{ github.event.inputs.session_id }}"
           else
@@ -118,26 +115,26 @@ jobs:
 
           REPO="https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           WORKDIR="${GITHUB_WORKSPACE}"
+          PARENT_DIR="$(dirname "$WORKDIR")"
+          REPO_DIR="$(basename "$WORKDIR")"
+          BRANCH="${{ github.ref_name }}"
+
+          mkdir -p "$PARENT_DIR"
+          cd "$PARENT_DIR"
 
           if [ -d "$WORKDIR/.git" ]; then
             cd "$WORKDIR"
             git remote set-url origin "$REPO"
-            git fetch --depth=1 origin "${{ github.ref_name }}"
-            git checkout "${{ github.ref_name }}"
-            git reset --hard "origin/${{ github.ref_name }}"
+            git fetch --depth=1 origin "$BRANCH"
+            git checkout "$BRANCH"
+            git reset --hard "origin/$BRANCH"
           else
             rm -rf "$WORKDIR"
-            git clone --depth=1 --branch "${{ github.ref_name }}" "$REPO" "$WORKDIR"
+            git clone --depth=1 --branch "$BRANCH" "$REPO" "$REPO_DIR"
+            cd "$WORKDIR"
           fi
 
-          cd "$WORKDIR"
           git config --global --add safe.directory "$WORKDIR"
-
-      - name: Session Info Display
-        shell: bash
-        run: |
-          echo "Session ID: ${{ needs.session-management.outputs.session_id }}"
-          echo "Triggered by: ${{ needs.session-management.outputs.trigger_source }}"
 
       - name: Validate JSON file exists
         id: validate
@@ -170,25 +167,8 @@ jobs:
             jq -r --arg section "$section" '.[$section][0].entry // ""' "$JSON_FILE"
           }
 
-          milestone=$(extract_section1_value "Milestone")
-          patch_desc=$(extract_section1_value "patch_description")
           version=$(extract_section1_value "version")
-          svn=$(extract_section1_value "svn")
-          se_svn=$(extract_section1_value "se_svn")
-          min_svn=$(extract_section1_value "min_svn")
-          min_runtime_id=$(extract_section1_value "min_runtime_id")
-          patch_rollback_flags=$(extract_section1_value "patch_rollback_flags")
           prev_version=$(extract_section1_value "prev_version")
-
-          echo "Milestone: $milestone"
-          echo "Patch Description: $patch_desc"
-          echo "Version: $version"
-          echo "SVN: $svn"
-          echo "SE_SVN: $se_svn"
-          echo "Min SVN: $min_svn"
-          echo "Min Runtime ID: $min_runtime_id"
-          echo "Patch Rollback Flags: $patch_rollback_flags"
-          echo "Previous Version: $prev_version"
 
           clean_prev_version=$(echo "$prev_version" | sed 's/0x//')
           clean_current_version=$(echo "$version" | sed 's/0x//')
@@ -234,7 +214,6 @@ jobs:
       - name: Send Build Start Notification
         shell: bash
         run: |
-          set -e
           CALLBACK_URL="${{ needs.session-management.outputs.callback_url }}"
           SESSION_ID="${{ needs.session-management.outputs.session_id }}"
 
@@ -298,19 +277,25 @@ jobs:
 
           REPO="https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           WORKDIR="${GITHUB_WORKSPACE}"
+          PARENT_DIR="$(dirname "$WORKDIR")"
+          REPO_DIR="$(basename "$WORKDIR")"
+          BRANCH="${{ github.ref_name }}"
+
+          mkdir -p "$PARENT_DIR"
+          cd "$PARENT_DIR"
 
           if [ -d "$WORKDIR/.git" ]; then
             cd "$WORKDIR"
             git remote set-url origin "$REPO"
-            git fetch --depth=1 origin "${{ github.ref_name }}"
-            git checkout "${{ github.ref_name }}"
-            git reset --hard "origin/${{ github.ref_name }}"
+            git fetch --depth=1 origin "$BRANCH"
+            git checkout "$BRANCH"
+            git reset --hard "origin/$BRANCH"
           else
             rm -rf "$WORKDIR"
-            git clone --depth=1 --branch "${{ github.ref_name }}" "$REPO" "$WORKDIR"
+            git clone --depth=1 --branch "$BRANCH" "$REPO" "$REPO_DIR"
+            cd "$WORKDIR"
           fi
 
-          cd "$WORKDIR"
           git config --global --add safe.directory "$WORKDIR"
 
       - name: Update Config File with JSON Values
@@ -406,19 +391,25 @@ jobs:
 
           REPO="https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           WORKDIR="${GITHUB_WORKSPACE}"
+          PARENT_DIR="$(dirname "$WORKDIR")"
+          REPO_DIR="$(basename "$WORKDIR")"
+          BRANCH="${{ github.ref_name }}"
+
+          mkdir -p "$PARENT_DIR"
+          cd "$PARENT_DIR"
 
           if [ -d "$WORKDIR/.git" ]; then
             cd "$WORKDIR"
             git remote set-url origin "$REPO"
-            git fetch --depth=1 origin "${{ github.ref_name }}"
-            git checkout "${{ github.ref_name }}"
-            git reset --hard "origin/${{ github.ref_name }}"
+            git fetch --depth=1 origin "$BRANCH"
+            git checkout "$BRANCH"
+            git reset --hard "origin/$BRANCH"
           else
             rm -rf "$WORKDIR"
-            git clone --depth=1 --branch "${{ github.ref_name }}" "$REPO" "$WORKDIR"
+            git clone --depth=1 --branch "$BRANCH" "$REPO" "$REPO_DIR"
+            cd "$WORKDIR"
           fi
 
-          cd "$WORKDIR"
           git config --global --add safe.directory "$WORKDIR"
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
@@ -673,19 +664,25 @@ jobs:
 
           REPO="https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           WORKDIR="${GITHUB_WORKSPACE}"
+          PARENT_DIR="$(dirname "$WORKDIR")"
+          REPO_DIR="$(basename "$WORKDIR")"
+          BRANCH="${{ github.ref_name }}"
+
+          mkdir -p "$PARENT_DIR"
+          cd "$PARENT_DIR"
 
           if [ -d "$WORKDIR/.git" ]; then
             cd "$WORKDIR"
             git remote set-url origin "$REPO"
-            git fetch --depth=1 origin "${{ github.ref_name }}"
-            git checkout "${{ github.ref_name }}"
-            git reset --hard "origin/${{ github.ref_name }}"
+            git fetch --depth=1 origin "$BRANCH"
+            git checkout "$BRANCH"
+            git reset --hard "origin/$BRANCH"
           else
             rm -rf "$WORKDIR"
-            git clone --depth=1 --branch "${{ github.ref_name }}" "$REPO" "$WORKDIR"
+            git clone --depth=1 --branch "$BRANCH" "$REPO" "$REPO_DIR"
+            cd "$WORKDIR"
           fi
 
-          cd "$WORKDIR"
           git config --global --add safe.directory "$WORKDIR"
 
       - name: Copy release collaterals (.inc and .pdb) to SRF host
