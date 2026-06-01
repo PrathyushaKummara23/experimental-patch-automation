@@ -62,7 +62,6 @@ env:
   MUPPET_TOOL_PATH: /nfs/site/disks/dcsg_0729/fxt-tools/MUPPET/fxtMuppet.py
   EXPECT_PATH: /usr/intel/bin/expect
   FACELESS_USER: grp_gnr_fit1_build
-  FACELESS_PRINCIPAL: amr/grp_gnr_fit1_build
 
 jobs:
   prepare-config:
@@ -72,11 +71,419 @@ jobs:
       config_path: ${{ steps.generate-config.outputs.config_path }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Switch to faceless account and verify
+      - name: Verify faceless account
+        shell: bash
         env:
           BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
         run: |
-          echo "Switching to faceless account for path validation..."
-          CURRENT_USER=$((echo "$BUILD_PASSWORD"; sleep 1) | sudo -S -u ${{ env.FACELESS_USER }} whoami)
+          set -euo pipefail
+
+          CURRENT_USER=$(
+            (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+            sudo -S -u "${{ env.FACELESS_USER }}" whoami
+          )
+
+          echo "Expected user: ${{ env.FACELESS_USER }}"
+          echo "Actual user: $CURRENT_USER"
+
+          [[ "$CURRENT_USER" == "${{ env.FACELESS_USER }}" ]]
+
+      - name: Validate versions
+        id: validate-versions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASELINE_CLEAN="${{ github.event.inputs.baseline_version }}"
+          NEW_CLEAN="${{ github.event.inputs.new_version }}"
+
+          BASELINE_CLEAN="${BASELINE_CLEAN#0x}"
+          NEW_CLEAN="${NEW_CLEAN#0x}"
+
+          [[ "$BASELINE_CLEAN" =~ ^[0-9A-Fa-f]{8}$ ]]
+          [[ "$NEW_CLEAN" =~ ^[0-9A-Fa-f]{8}$ ]]
+
+          echo "baseline_clean=$BASELINE_CLEAN" >> "$GITHUB_OUTPUT"
+          echo "new_clean=$NEW_CLEAN" >> "$GITHUB_OUTPUT"
+
+      - name: Validate baseline config exists
+        id: validate-baseline
+        shell: bash
+        env:
+          BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          BASELINE_CLEAN="${{ steps.validate-versions.outputs.baseline_clean }}"
+          SOURCE_CONFIG="${{ env.PATCHES_BASE_PATH }}/build/${BASELINE_CLEAN}/release/config_${BASELINE_CLEAN}.ini"
+
+          echo "Checking baseline config: $SOURCE_CONFIG"
+
+          CONFIG_CHECK=$(
+            (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+            sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
+              if [[ -f '$SOURCE_CONFIG' ]]; then
+                echo EXISTS
+              else
+                echo NOT_FOUND
+              fi
+            "
+          )
+
+          [[ "$CONFIG_CHECK" == "EXISTS" ]]
+
+          echo "baseline_config=$SOURCE_CONFIG" >> "$GITHUB_OUTPUT"
+
+      - name: Validate optional input paths
+        shell: bash
+        env:
+          BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          check_path() {
+            local name="$1"
+            local path="$2"
+
+            if [[ -z "$path" ]]; then
+              return 0
+            fi
+
+            echo "Checking $name: $path"
+
+            local result
+            result=$(
+              (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+              sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
+                if [[ -f '$path' ]]; then
+                  echo EXISTS
+                else
+                  echo NOT_FOUND
+                fi
+              "
+            )
+
+            [[ "$result" == "EXISTS" ]]
+          }
+
+          check_path "ICODE" "${{ github.event.inputs.icode }}"
+          check_path "OOBMSM" "${{ github.event.inputs.oobmsm }}"
+          check_path "S3M" "${{ github.event.inputs.s3m }}"
+          check_path "PCODE-IO" "${{ github.event.inputs.pcode_io }}"
+          check_path "PCODE-C" "${{ github.event.inputs.pcode_c }}"
+          check_path "UCODE" "${{ github.event.inputs.ucode }}"
+          check_path "XUCODE" "${{ github.event.inputs.xucode }}"
+          check_path "MCHECK" "${{ github.event.inputs.mcheck }}"
+          check_path "TCODE" "${{ github.event.inputs.tcode }}"
+          check_path "ACODE" "${{ github.event.inputs.acode }}"
+
+      - name: Generate config
+        id: generate-config
+        shell: bash
+        env:
+          BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          BASELINE_CLEAN="${{ steps.validate-versions.outputs.baseline_clean }}"
+          NEW_CLEAN="${{ steps.validate-versions.outputs.new_clean }}"
+          SOURCE_CONFIG="${{ steps.validate-baseline.outputs.baseline_config }}"
+          NEW_CONFIG="${{ env.WORK_BASE_PATH }}/config_${NEW_CLEAN}.ini"
+
+          echo "Source config: $SOURCE_CONFIG"
+          echo "New config: $NEW_CONFIG"
+
+          (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) | sudo -S -u "${{ env.FACELESS_USER }}" env \
+            BASELINE_CLEAN="$BASELINE_CLEAN" \
+            NEW_CLEAN="$NEW_CLEAN" \
+            SOURCE_CONFIG="$SOURCE_CONFIG" \
+            NEW_CONFIG="$NEW_CONFIG" \
+            CONFIG_BUILD_PATH="${{ env.CONFIG_BUILD_PATH }}" \
+            ICODE_INPUT="${{ github.event.inputs.icode }}" \
+            OOBMSM_INPUT="${{ github.event.inputs.oobmsm }}" \
+            S3M_INPUT="${{ github.event.inputs.s3m }}" \
+            PCODE_IO_INPUT="${{ github.event.inputs.pcode_io }}" \
+            PCODE_C_INPUT="${{ github.event.inputs.pcode_c }}" \
+            UCODE_INPUT="${{ github.event.inputs.ucode }}" \
+            XUCODE_INPUT="${{ github.event.inputs.xucode }}" \
+            MCHECK_INPUT="${{ github.event.inputs.mcheck }}" \
+            TCODE_INPUT="${{ github.event.inputs.tcode }}" \
+            ACODE_INPUT="${{ github.event.inputs.acode }}" \
+            bash <<'EOSUDO'
+          set -euo pipefail
+
+          escape_sed_replacement() {
+            printf '%s' "$1" | sed 's/[&|]/\\&/g'
+          }
+
+          mkdir -p "$(dirname "$NEW_CONFIG")"
+          cp "$SOURCE_CONFIG" "$NEW_CONFIG"
+
+          sed -i "s/^version = .*/version = 0x${NEW_CLEAN}/" "$NEW_CONFIG"
+          sed -i "s/^prev_version = .*/prev_version = 0x${BASELINE_CLEAN}/" "$NEW_CONFIG"
+          sed -i "s|^build_path = .*|build_path = ${CONFIG_BUILD_PATH}|" "$NEW_CONFIG"
+          sed -i "s/^project_name = .*/project_name = GNR/" "$NEW_CONFIG"
+          sed -i "s/^stepping = .*/stepping = B0/" "$NEW_CONFIG"
+          sed -i "s/^release = .*/release = no/" "$NEW_CONFIG"
+          sed -i "s/^fiv_register = .*/fiv_register = no/" "$NEW_CONFIG"
+          sed -i "s/^fiv_crawler = .*/fiv_crawler = no/" "$NEW_CONFIG"
+          sed -i "s/^release_notes = .*/release_notes = no/" "$NEW_CONFIG"
+          sed -i "s/^patch_description = .*/patch_description = GNR PRQ BIT SET Debug Patch/" "$NEW_CONFIG"
+          sed -i "s/^fit1_sign = .*/fit1_sign = css-debug/" "$NEW_CONFIG"
+          sed -i "s/^soc_sign = .*/soc_sign = css-debug/" "$NEW_CONFIG"
+
+          if [[ -n "$ICODE_INPUT" ]]; then
+            sed -i "s|^icode = .*|icode = $(escape_sed_replacement "$ICODE_INPUT")|" "$NEW_CONFIG"
+          fi
+          if [[ -n "$OOBMSM_INPUT" ]]; then
+            sed -i "s|^oobmsm = .*|oobmsm = $(escape_sed_replacement "$OOBMSM_INPUT")|" "$NEW_CONFIG"
+          fi
+          if [[ -n "$S3M_INPUT" ]]; then
+            sed -i "s|^s3m = .*|s3m = $(escape_sed_replacement "$S3M_INPUT")|" "$NEW_CONFIG"
+          fi
+          if [[ -n "$PCODE_IO_INPUT" ]]; then
+            sed -i "s|^pcode-io = .*|pcode-io = $(escape_sed_replacement "$PCODE_IO_INPUT")|" "$NEW_CONFIG"
+          fi
+          if [[ -n "$PCODE_C_INPUT" ]]; then
+            sed -i "s|^pcode-c = .*|pcode-c = $(escape_sed_replacement "$PCODE_C_INPUT")|" "$NEW_CONFIG"
+          fi
+          if [[ -n "$UCODE_INPUT" ]]; then
+            sed -i "s|^ucode = .*|ucode = $(escape_sed_replacement "$UCODE_INPUT")|" "$NEW_CONFIG"
+          fi
+          if [[ -n "$XUCODE_INPUT" ]]; then
+            sed -i "s|^xucode = .*|xucode = $(escape_sed_replacement "$XUCODE_INPUT")|" "$NEW_CONFIG"
+          fi
+          if [[ -n "$MCHECK_INPUT" ]]; then
+            sed -i "s|^mcheck = .*|mcheck = $(escape_sed_replacement "$MCHECK_INPUT")|" "$NEW_CONFIG"
+          fi
+          if [[ -n "$TCODE_INPUT" ]]; then
+            sed -i "s|^tcode = .*|tcode = $(escape_sed_replacement "$TCODE_INPUT")|" "$NEW_CONFIG"
+          fi
+          if [[ -n "$ACODE_INPUT" ]]; then
+            sed -i "s|^acode = .*|acode = $(escape_sed_replacement "$ACODE_INPUT")|" "$NEW_CONFIG"
+          fi
+
+          chmod 777 "$NEW_CONFIG"
+          cat "$NEW_CONFIG"
+          EOSUDO
+
+          echo "config_file=config_${NEW_CLEAN}.ini" >> "$GITHUB_OUTPUT"
+          echo "config_path=$NEW_CONFIG" >> "$GITHUB_OUTPUT"
+
+  kerberos-setup:
+    runs-on: [self-hosted, node16]
+    needs: prepare-config
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify kerberos tools exist
+        shell: bash
+        env:
+          BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          KTAB_CHECK=$(
+            (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+            sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
+              [[ -f '${{ env.KTAB_PATH }}' ]] && echo EXISTS || echo NOT_FOUND
+            "
+          )
+
+          KCRON_CHECK=$(
+            (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+            sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
+              [[ -f '${{ env.KCRON_PATH }}' ]] && echo EXISTS || echo NOT_FOUND
+            "
+          )
+
+          [[ "$KTAB_CHECK" == "EXISTS" ]]
+          [[ "$KCRON_CHECK" == "EXISTS" ]]
+
+      - name: Initialize kerberos ticket
+        shell: bash
+        env:
+          BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
+          FA_PASSWORD: ${{ secrets.GNR_FA_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          KTAB_RESULT=$(
+            (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+            sudo -S -u "${{ env.FACELESS_USER }}" env FA_PASSWORD="$FA_PASSWORD" bash -c '
+              printf "%s\n" "$FA_PASSWORD" | '"${{ env.KTAB_PATH }}"' -i 2>&1
+            '
+          )
+
+          echo "$KTAB_RESULT"
+
+          if echo "$KTAB_RESULT" | grep -qiE 'error|failed|denied'; then
+            echo "Kerberos ticket initialization failed"
+            exit 1
+          fi
+
+      - name: Initialize kerberos cron
+        shell: bash
+        env:
+          BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          KCRON_RESULT=$(
+            (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+            sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
+              printf 'y\n' | '${{ env.KCRON_PATH }}' -i 2>&1
+            "
+          )
+
+          echo "$KCRON_RESULT"
+
+          if echo "$KCRON_RESULT" | grep -qiE 'error|failed|denied'; then
+            echo "Kerberos cron initialization failed"
+            exit 1
+          fi
+
+  build-patch:
+    runs-on: [self-hosted, node16]
+    needs: [prepare-config, kerberos-setup]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify build prerequisites
+        shell: bash
+        env:
+          BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          NEW_CLEAN="${{ github.event.inputs.new_version }}"
+          NEW_CLEAN="${NEW_CLEAN#0x}"
+          CONFIG_PATH="${{ env.WORK_BASE_PATH }}/config_${NEW_CLEAN}.ini"
+
+          PYTHON_CHECK=$(
+            (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+            sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
+              [[ -f '${{ env.PYTHON_PATH }}' ]] && echo EXISTS || echo NOT_FOUND
+            "
+          )
+
+          MUPPET_CHECK=$(
+            (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+            sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
+              [[ -f '${{ env.MUPPET_TOOL_PATH }}' ]] && echo EXISTS || echo NOT_FOUND
+            "
+          )
+
+          EXPECT_CHECK=$(
+            (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+            sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
+              [[ -f '${{ env.EXPECT_PATH }}' ]] && echo EXISTS || echo NOT_FOUND
+            "
+          )
+
+          CONFIG_CHECK=$(
+            (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+            sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
+              [[ -f '$CONFIG_PATH' ]] && echo EXISTS || echo NOT_FOUND
+            "
+          )
+
+          [[ "$PYTHON_CHECK" == "EXISTS" ]]
+          [[ "$MUPPET_CHECK" == "EXISTS" ]]
+          [[ "$EXPECT_CHECK" == "EXISTS" ]]
+          [[ "$CONFIG_CHECK" == "EXISTS" ]]
+
+      - name: Execute build
+        shell: bash
+        env:
+          BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
+          CSS_PASSWORD: ${{ secrets.GNR_CSS_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          NEW_CLEAN="${{ github.event.inputs.new_version }}"
+          NEW_CLEAN="${NEW_CLEAN#0x}"
+          CONFIG_FILE="config_${NEW_CLEAN}.ini"
+          SCRIPT_PATH="${RUNNER_TEMP}/build_with_expect.exp"
+
+          cat > "$SCRIPT_PATH" <<'EOF'
+          #!/usr/intel/bin/expect -f
+          set timeout 1800
+          set css_password $env(CSS_PASSWORD)
+          set config_file [lindex $argv 0]
+
+          spawn /usr/intel/bin/python3.7.4 /nfs/site/disks/dcsg_0729/fxt-tools/MUPPET/fxtMuppet.py --conf $config_file --set_prq
+
+          expect {
+              "Enter your CSS password:" {
+                  send "$css_password\r"
+                  exp_continue
+              }
+              "Enter your CSS password: " {
+                  send "$css_password\r"
+                  exp_continue
+              }
+              -re ".*assword.*" {
+                  send "$css_password\r"
+                  exp_continue
+              }
+              eof {
+                  catch wait result
+                  exit [lindex $result 3]
+              }
+              timeout {
+                  puts "Build timed out after 30 minutes"
+                  exit 124
+              }
+          }
+          EOF
+
+          chmod 755 "$SCRIPT_PATH"
+
+          set +e
+          BUILD_RESULT=$(
+            (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
+            sudo -S -u "${{ env.FACELESS_USER }}" env CSS_PASSWORD="$CSS_PASSWORD" bash -c "
+              set -euo pipefail
+              cd '${{ env.WORK_BASE_PATH }}'
+              '$SCRIPT_PATH' '$CONFIG_FILE'
+            " 2>&1
+          )
+          BUILD_EXIT_CODE=$?
+          set -e
+
+          rm -f "$SCRIPT_PATH"
+
+          echo "$BUILD_RESULT"
+          echo "Build exit code: $BUILD_EXIT_CODE"
+
+          if [[ $BUILD_EXIT_CODE -eq 124 ]]; then
+            echo "Build timed out"
+            exit 124
+          fi
+
+          [[ $BUILD_EXIT_CODE -eq 0 ]]
+
+      - name: Verify build output
+        shell: bash
+        env:
+          BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          NEW_CLEAN="${{ github.event.inputs.new_version }}"
+          NEW_CLEAN="${NEW_CLEAN#0x}"
+
+          (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) | sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
+            set -euo pipefail
+            cd '${{ env.WORK_BASE_PATH }}'
+            echo 'Recent files:'
+            find . -type f -mmin -30 2>/dev/null | head -20 || true
+            echo
+            echo 'Version-related files:'
+            find . -type f -name '*${NEW_CLEAN}*' 2>/dev/null | head -20 || true
+          "
