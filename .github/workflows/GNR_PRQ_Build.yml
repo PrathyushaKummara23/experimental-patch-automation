@@ -70,9 +70,6 @@ jobs:
       config_file: ${{ steps.generate-config.outputs.config_file }}
       config_path: ${{ steps.generate-config.outputs.config_path }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Verify faceless account
         shell: bash
         env:
@@ -276,9 +273,6 @@ jobs:
     runs-on: [self-hosted, Linux, X64, gnr-patch-build]
     needs: prepare-config
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Verify kerberos tools exist
         shell: bash
         env:
@@ -350,9 +344,6 @@ jobs:
     runs-on: [self-hosted, Linux, X64, gnr-patch-build]
     needs: [prepare-config, kerberos-setup]
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Verify build prerequisites
         shell: bash
         env:
