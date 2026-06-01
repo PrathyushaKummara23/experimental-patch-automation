@@ -65,7 +65,7 @@ env:
 
 jobs:
   prepare-config:
-    runs-on: [self-hosted, node16]
+    runs-on: [self-hosted, Linux, X64, gnr-patch-build]
     outputs:
       config_file: ${{ steps.generate-config.outputs.config_file }}
       config_path: ${{ steps.generate-config.outputs.config_path }}
@@ -273,7 +273,7 @@ jobs:
           echo "config_path=$NEW_CONFIG" >> "$GITHUB_OUTPUT"
 
   kerberos-setup:
-    runs-on: [self-hosted, node16]
+    runs-on: [self-hosted, Linux, X64, gnr-patch-build]
     needs: prepare-config
     steps:
       - name: Checkout repository
@@ -347,7 +347,7 @@ jobs:
           fi
 
   build-patch:
-    runs-on: [self-hosted, node16]
+    runs-on: [self-hosted, Linux, X64, gnr-patch-build]
     needs: [prepare-config, kerberos-setup]
     steps:
       - name: Checkout repository
