@@ -297,74 +297,91 @@ jobs:
             exit 1
           fi
   build-patch:
-    runs-on: [self-hosted, Linux, X64, gnr-patch-build]
-    needs: [prepare-config, kerberos-setup]
-    steps:
+     runs-on: [self-hosted, Linux, X64, gnr-patch-build]
+     needs: [prepare-config, kerberos-setup]
+     steps:
       - name: Verify build prerequisites
         shell: bash
         env:
           BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
         run: |
           set -euo pipefail
+
           NEW_CLEAN="${{ github.event.inputs.new_version }}"
           NEW_CLEAN="${NEW_CLEAN#0x}"
           CONFIG_PATH="${{ env.WORK_BASE_PATH }}/config_${NEW_CLEAN}.ini"
+
           PYTHON_CHECK=$(
             (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
             sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
               [[ -f '${{ env.PYTHON_PATH }}' ]] && echo EXISTS || echo NOT_FOUND
             "
           )
+
           MUPPET_CHECK=$(
             (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
             sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
               [[ -f '${{ env.MUPPET_TOOL_PATH }}' ]] && echo EXISTS || echo NOT_FOUND
             "
           )
+
           EXPECT_CHECK=$(
             (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
             sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
               [[ -f '${{ env.EXPECT_PATH }}' ]] && echo EXISTS || echo NOT_FOUND
             "
           )
+
           CONFIG_CHECK=$(
             (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
             sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
               [[ -f '$CONFIG_PATH' ]] && echo EXISTS || echo NOT_FOUND
             "
           )
+
           [[ "$PYTHON_CHECK" == "EXISTS" ]]
           [[ "$MUPPET_CHECK" == "EXISTS" ]]
           [[ "$EXPECT_CHECK" == "EXISTS" ]]
           [[ "$CONFIG_CHECK" == "EXISTS" ]]
-      - name: Execute build
+
+      - name: Execute build with manual-sign confirmation
         shell: bash
         env:
           BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
-          CSS_PASSWORD: ${{ secrets.GNR_CSS_PASSWORD }}
         run: |
           set -euo pipefail
+
           NEW_CLEAN="${{ github.event.inputs.new_version }}"
           NEW_CLEAN="${NEW_CLEAN#0x}"
           CONFIG_FILE="config_${NEW_CLEAN}.ini"
           SCRIPT_PATH="${RUNNER_TEMP}/build_with_expect.exp"
+          BUILD_LOG="${RUNNER_TEMP}/build_output.log"
+
           cat > "$SCRIPT_PATH" <<'EOF'
           #!/usr/intel/bin/expect -f
           set timeout 1800
-          set css_password $env(CSS_PASSWORD)
           set config_file [lindex $argv 0]
+
           spawn /usr/intel/bin/python3.7.4 /nfs/site/disks/dcsg_0729/fxt-tools/MUPPET/fxtMuppet.py --conf $config_file --set_prq
+
           expect {
-              "Enter your CSS password:" {
-                  send "$css_password\r"
+              -re ".*[Pp]ress[[:space:]]+y.*" {
+                  send "y\r"
                   exp_continue
               }
-              "Enter your CSS password: " {
-                  send "$css_password\r"
+              -re ".*\\(y/n\\).*" {
+                  send "y\r"
                   exp_continue
               }
-              -re ".*assword.*" {
-                  send "$css_password\r"
+              -re ".*\\[y/n\\].*" {
+                  send "y\r"
+                  exp_continue
+              }
+              -re ".*continue.*\\?.*" {
+                  send "y\r"
+                  exp_continue
+              }
+              -re ".*manual.*sign.*" {
                   exp_continue
               }
               eof {
@@ -377,34 +394,51 @@ jobs:
               }
           }
           EOF
+
           chmod 755 "$SCRIPT_PATH"
+          rm -f "$BUILD_LOG"
+
           set +e
-          BUILD_RESULT=$(
+          (
             (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) |
-            sudo -S -u "${{ env.FACELESS_USER }}" env CSS_PASSWORD="$CSS_PASSWORD" bash -c "
+            sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
               set -euo pipefail
               cd '${{ env.WORK_BASE_PATH }}'
               '$SCRIPT_PATH' '$CONFIG_FILE'
-            " 2>&1
-          )
-          BUILD_EXIT_CODE=$?
+            "
+          ) 2>&1 | tee "$BUILD_LOG"
+          BUILD_EXIT_CODE=${PIPESTATUS[0]}
           set -e
+
           rm -f "$SCRIPT_PATH"
-          echo "$BUILD_RESULT"
+
           echo "Build exit code: $BUILD_EXIT_CODE"
+
           if [[ $BUILD_EXIT_CODE -eq 124 ]]; then
             echo "Build timed out"
             exit 124
           fi
-          [[ $BUILD_EXIT_CODE -eq 0 ]]
+
+          if [[ $BUILD_EXIT_CODE -ne 0 ]]; then
+            echo "Build command failed"
+            exit $BUILD_EXIT_CODE
+          fi
+
+          if grep -qiE 'FAILURE --|Error Occurred|Invalid signing type|Traceback|Exception' "$BUILD_LOG"; then
+            echo "Build output contains a reported failure"
+            exit 1
+          fi
+
       - name: Verify build output
         shell: bash
         env:
           BUILD_PASSWORD: ${{ secrets.BUILD_PASSWORD }}
         run: |
           set -euo pipefail
+
           NEW_CLEAN="${{ github.event.inputs.new_version }}"
           NEW_CLEAN="${NEW_CLEAN#0x}"
+
           (printf '%s\n' "$BUILD_PASSWORD"; sleep 1) | sudo -S -u "${{ env.FACELESS_USER }}" bash -c "
             set -euo pipefail
             cd '${{ env.WORK_BASE_PATH }}'
